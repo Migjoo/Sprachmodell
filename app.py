@@ -1,404 +1,78 @@
-import streamlit as st
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import gradio as gr
+import spaces
 
 from ChatService import ChatService
 from DocumentParser import DocumentParser, DocumentParserError
-from LocalLLMClient import (
-    MODEL_CATALOG,
-    LocalLLMClient,
-    LocalLLMError,
-)
+from ZeroGPULLMClient import ZeroGPULLMClient, ZeroGPULLMError
 
+MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 
-st.set_page_config(
-    page_title="ZtQ - Sprachmodell",
-    page_icon="🧠",
-    layout="centered",
-)
+llm_client = ZeroGPULLMClient(model_name=MODEL_ID, max_new_tokens=500)
+chat_service = ChatService(llm_client)
+document_parser = DocumentParser()
 
+@spaces.GPU(duration=120)
+def smooth_text(text: str) -> str:
+    try:
+        return chat_service.smooth_text(text)
+    except (ValueError, ZeroGPULLMError) as exc:
+        raise gr.Error(str(exc)) from exc
 
-DEFAULT_MODEL_LABEL = "Qwen2.5 1.5B – empfohlen"
-CUSTOM_MODEL_LABEL = "Eigenes Hugging-Face-Modell"
+def _file_path(file_value: Any) -> Path:
+    if isinstance(file_value, str):
+        return Path(file_value)
+    name = getattr(file_value, "name", None)
+    if name:
+        return Path(name)
+    raise DocumentParserError("Eine hochgeladene Datei konnte nicht verarbeitet werden.")
 
-
-@st.cache_resource(show_spinner=False)
-def load_llm(
-    model_name: str,
-    max_new_tokens: int,
-    trust_remote_code: bool,
-) -> LocalLLMClient:
-    """Lädt genau das aktuell ausgewählte Modell."""
-
-    return LocalLLMClient(
-        model_name=model_name,
-        max_new_tokens=max_new_tokens,
-        trust_remote_code=trust_remote_code,
-    )
-
-
-def initialize_session_state() -> None:
-    """Legt die benötigten Sitzungsvariablen an."""
-
-    default_model = MODEL_CATALOG[DEFAULT_MODEL_LABEL]
-
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    if "active_model_selector" not in st.session_state:
-        st.session_state.active_model_selector = (
-            DEFAULT_MODEL_LABEL
-        )
-
-    if "active_model_name" not in st.session_state:
-        st.session_state.active_model_name = (
-            default_model.model_id
-        )
-
-    if "active_max_new_tokens" not in st.session_state:
-        st.session_state.active_max_new_tokens = (
-            default_model.max_new_tokens
-        )
-
-    if "active_trust_remote_code" not in st.session_state:
-        st.session_state.active_trust_remote_code = (
-            default_model.trust_remote_code
-        )
-
-
-initialize_session_state()
-
-
-st.title("🧠 ZtQ - Sprachmodell")
-
-st.caption(
-    "Lokaler, modellagnostischer Assistent für "
-    "Textüberarbeitung und Dokumentfragen."
-)
-
-
-model_options = [
-    *MODEL_CATALOG.keys(),
-    CUSTOM_MODEL_LABEL,
-]
-
-active_selector = st.session_state.active_model_selector
-
-if active_selector not in model_options:
-    active_selector = DEFAULT_MODEL_LABEL
-
-
-with st.sidebar:
-    st.header("Sprachmodell")
-
-    selected_model_label = st.selectbox(
-        "Modell auswählen",
-        options=model_options,
-        index=model_options.index(active_selector),
-    )
-
-    if selected_model_label == CUSTOM_MODEL_LABEL:
-        custom_model_name = st.text_input(
-            "Hugging-Face-Modell-ID",
-            value=(
-                st.session_state.active_model_name
-                if (
-                    st.session_state.active_model_selector
-                    == CUSTOM_MODEL_LABEL
-                )
-                else ""
-            ),
-            placeholder="Organisation/Modellname",
-            help=(
-                "Beispiel: Qwen/Qwen2.5-1.5B-Instruct"
-            ),
-        )
-
-        custom_max_tokens = st.number_input(
-            "Maximale Antwortlänge",
-            min_value=50,
-            max_value=2000,
-            value=500,
-            step=50,
-        )
-
-        custom_trust_remote_code = st.checkbox(
-            "Externen Modellcode erlauben",
-            value=False,
-            help=(
-                "Nur aktivieren, wenn das Modell dies ausdrücklich "
-                "benötigt und die Quelle vertrauenswürdig ist."
-            ),
-        )
-
-        selected_model_name = custom_model_name.strip()
-        selected_max_tokens = int(custom_max_tokens)
-        selected_trust_remote_code = (
-            custom_trust_remote_code
-        )
-
-        st.caption(
-            "Hier kann grundsätzlich jedes kompatible "
-            "Causal-Language-Model eingetragen werden."
-        )
-
-    else:
-        selected_definition = MODEL_CATALOG[
-            selected_model_label
-        ]
-
-        selected_model_name = (
-            selected_definition.model_id
-        )
-
-        selected_max_tokens = (
-            selected_definition.max_new_tokens
-        )
-
-        selected_trust_remote_code = (
-            selected_definition.trust_remote_code
-        )
-
-        st.caption(
-            selected_definition.description
-        )
-
-        st.code(selected_model_name)
-
-    load_button = st.button(
-        "Ausgewähltes Modell laden",
-        use_container_width=True,
-        type="primary",
-    )
-
-    if load_button:
-        if not selected_model_name:
-            st.error(
-                "Bitte zuerst eine Hugging-Face-Modell-ID eingeben."
-            )
-
-        else:
-            st.session_state.active_model_selector = (
-                selected_model_label
-            )
-
-            st.session_state.active_model_name = (
-                selected_model_name
-            )
-
-            st.session_state.active_max_new_tokens = (
-                selected_max_tokens
-            )
-
-            st.session_state.active_trust_remote_code = (
-                selected_trust_remote_code
-            )
-
-            st.session_state.messages = []
-
-            # Entfernt das bisherige Modell aus dem
-            # Streamlit-Ressourcencache.
-            load_llm.clear()
-
-            st.rerun()
-
-
-try:
-    with st.spinner(
-        "Sprachmodell wird geladen. Beim ersten Einsatz eines "
-        "Modells kann der Download einige Minuten dauern …"
-    ):
-        llm_client = load_llm(
-            model_name=st.session_state.active_model_name,
-            max_new_tokens=(
-                st.session_state.active_max_new_tokens
-            ),
-            trust_remote_code=(
-                st.session_state.active_trust_remote_code
-            ),
-        )
-
-    chat_service = ChatService(llm_client)
-    document_parser = DocumentParser()
-
-except LocalLLMError as exc:
-    st.error(str(exc))
-    st.stop()
-
-
-with st.sidebar:
-    st.divider()
-
-    st.header("Arbeitsmodus")
-
-    mode = st.radio(
-        "Funktion auswählen",
-        options=[
-            "Text überarbeiten",
-            "Dokumente befragen",
-        ],
-    )
-
-    st.divider()
-
-    uploaded_files = st.file_uploader(
-        "Dokumente hochladen",
-        type=[
-            "pdf",
-            "docx",
-            "txt",
-            "md",
-        ],
-        accept_multiple_files=True,
-        help=(
-            "Dateien auf diese Fläche ziehen oder über "
-            "die Dateiauswahl öffnen."
-        ),
-    )
-
+def _build_document_context(files: list[Any] | None) -> str:
+    if not files:
+        raise ValueError("Bitte zuerst mindestens ein Dokument hochladen.")
     document_parts: list[str] = []
-    readable_files = 0
+    for file_value in files:
+        path = _file_path(file_value)
+        with path.open("rb") as file_handle:
+            text = document_parser.parse(uploaded_file=file_handle, filename=path.name)
+        document_parts.append(f"===== DATEI: {path.name} =====\n\n{text}")
+    return "\n\n".join(document_parts)
 
-    if uploaded_files:
-        for uploaded_file in uploaded_files:
-            try:
-                extracted_text = document_parser.parse(
-                    uploaded_file=uploaded_file,
-                    filename=uploaded_file.name,
-                )
+@spaces.GPU(duration=120)
+def answer_documents(files: list[Any] | None, question: str) -> str:
+    try:
+        document_context = _build_document_context(files)
+        return chat_service.answer_from_documents(question=question, document_context=document_context)
+    except (ValueError, DocumentParserError, ZeroGPULLMError) as exc:
+        raise gr.Error(str(exc)) from exc
 
-                document_parts.append(
-                    f"===== DATEI: {uploaded_file.name} =====\n\n"
-                    f"{extracted_text}"
-                )
+with gr.Blocks(title="ZtQ - Sprachmodell") as demo:
+    gr.Markdown("""
+# 🧠 ZtQ - Sprachmodell
 
-                readable_files += 1
+Deutschsprachiger Assistent für Textüberarbeitung und Dokumentfragen.
 
-                st.success(
-                    f"{uploaded_file.name} eingelesen"
-                )
+**Online-Modell:** `Qwen/Qwen2.5-0.5B-Instruct`
+""")
 
-            except DocumentParserError as exc:
-                st.warning(str(exc))
+    with gr.Tab("Text überarbeiten"):
+        smoothing_input = gr.Textbox(label="Ausgangstext", lines=10, placeholder="Text eingeben, der sprachlich geglättet werden soll …")
+        smoothing_button = gr.Button("Text überarbeiten", variant="primary")
+        smoothing_output = gr.Textbox(label="Überarbeitete Fassung", lines=10)
+        smoothing_button.click(fn=smooth_text, inputs=smoothing_input, outputs=smoothing_output)
 
-    document_context = "\n\n".join(
-        document_parts
-    )
+    with gr.Tab("Dokumente befragen"):
+        document_files = gr.File(label="Dokumente", file_count="multiple", file_types=[".pdf", ".docx", ".txt", ".md"], type="filepath")
+        document_question = gr.Textbox(label="Frage", lines=3, placeholder="Welche Informationen stehen in den Dokumenten?")
+        document_button = gr.Button("Frage beantworten", variant="primary")
+        document_answer = gr.Textbox(label="Antwort", lines=10)
+        document_button.click(fn=answer_documents, inputs=[document_files, document_question], outputs=document_answer)
 
-    if uploaded_files:
-        st.info(
-            f"{readable_files} von "
-            f"{len(uploaded_files)} Dateien lesbar."
-        )
+    gr.Markdown("Die Berechnung erfolgt über Hugging Face ZeroGPU. Die lokale Streamlit-Version bleibt im `main`-Branch erhalten.")
 
-    st.divider()
-
-    st.subheader("Aktives Modell")
-
-    st.code(
-        st.session_state.active_model_name
-    )
-
-    st.write("Ausführung über:")
-
-    st.code(
-        llm_client.get_device_name()
-    )
-
-    if st.button(
-        "Chatverlauf löschen",
-        use_container_width=True,
-    ):
-        st.session_state.messages = []
-        st.rerun()
-
-
-if not st.session_state.messages:
-    if mode == "Text überarbeiten":
-        st.info(
-            "Gib unten einen Text ein. Das ausgewählte "
-            "Sprachmodell erstellt eine überarbeitete Fassung."
-        )
-
-    else:
-        st.info(
-            "Lade links ein oder mehrere Dokumente hoch und "
-            "stelle anschließend eine Frage dazu."
-        )
-
-
-for message in st.session_state.messages:
-    with st.chat_message(
-        message["role"]
-    ):
-        st.markdown(
-            message["content"]
-        )
-
-
-if mode == "Dokumente befragen":
-    input_placeholder = (
-        "Frage zu den hochgeladenen Dokumenten …"
-    )
-
-    input_disabled = not bool(
-        document_context
-    )
-
-else:
-    input_placeholder = (
-        "Text zur Überarbeitung eingeben …"
-    )
-
-    input_disabled = False
-
-
-user_input = st.chat_input(
-    input_placeholder,
-    disabled=input_disabled,
-)
-
-
-if user_input:
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": user_input,
-        }
-    )
-
-    with st.chat_message("user"):
-        st.markdown(user_input)
-
-    with st.chat_message("assistant"):
-        with st.spinner(
-            "Antwort wird erstellt …"
-        ):
-            try:
-                if mode == "Dokumente befragen":
-                    answer = (
-                        chat_service.answer_from_documents(
-                            question=user_input,
-                            document_context=document_context,
-                        )
-                    )
-
-                else:
-                    answer = (
-                        chat_service.smooth_text(
-                            user_input
-                        )
-                    )
-
-                st.markdown(answer)
-
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": answer,
-                    }
-                )
-
-            except (
-                LocalLLMError,
-                ValueError,
-            ) as exc:
-                st.error(str(exc))
+if __name__ == "__main__":
+    demo.queue(default_concurrency_limit=1, max_size=20).launch()
