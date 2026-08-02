@@ -1,0 +1,7 @@
+streamlit>=1.40
+torch>=2.2
+transformers>=4.45
+safetensors>=0.4
+sentencepiece>=0.2
+pypdf>=5.0
+python-docx>=1.1
