@@ -6,7 +6,7 @@ colorTo: indigo
 sdk: docker
 app_port: 7860
 pinned: false
-short_description: Modellagnostischer deutscher Assistent für Texte und Dokumente
+short_description: Deutscher Assistent für Texte und Dokumente
 models:
   - Qwen/Qwen2.5-0.5B-Instruct
   - Qwen/Qwen2.5-1.5B-Instruct
